@@ -1,3 +1,4 @@
+
 import asyncio
 from solana.rpc.async_api import AsyncClient
 from telegram.ext import Application, CommandHandler
@@ -15,45 +16,37 @@ logger = logging.getLogger(__name__)
 # Configuration
 SOLANA_RPC_URL = "https://api.mainnet-beta.solana.com"
 TELEGRAM_BOT_TOKEN = "7643287966:AAHsQEn2r29Wplh3IhRKoC1f25jNezl8nwM"
-WALLET_ADDRESSES = [
-    PublicKey("JAgzgU2uSzHJxZJqYRpPDk2vJpZrL876YtxLQWkKWJeV"),
-    PublicKey("AWaNwuTjfYMaprz2KebNe5E2K2WfcXjhawdvwoiFkjJ"),
-]
+CREATOR_WALLET = PublicKey("E88QpPXQFjyKmVK7kj5NjkAPjLTYnYoY2Dd6Po7WUJjg")
 USERS_FILE = "subscribed_users.json"
-TRANSACTIONS_FILE = "transactions.json"
+TOKEN_CREATION_FILE = "token_creations.json"
 
-
-def load_transactions():
-    if os.path.exists(TRANSACTIONS_FILE):
+def load_token_creations():
+    if os.path.exists(TOKEN_CREATION_FILE):
         try:
-            with open(TRANSACTIONS_FILE, "r") as f:
+            with open(TOKEN_CREATION_FILE, "r") as f:
                 return json.load(f)
         except:
             return []
     return []
 
+def save_token_creation(token_data):
+    tokens = load_token_creations()
+    tokens.append(token_data)
+    with open(TOKEN_CREATION_FILE, "w") as f:
+        json.dump(tokens, f, indent=4)
 
-def save_transaction(tx_data):
-    transactions = load_transactions()
-    transactions.append(tx_data)
-    with open(TRANSACTIONS_FILE, "w") as f:
-        json.dump(transactions, f, indent=4)
+def is_new_token(signature):
+    tokens = load_token_creations()
+    return not any(token["signature"] == signature for token in tokens)
 
-
-def is_new_transaction(signature):
-    transactions = load_transactions()
-    return not any(tx["signature"] == signature for tx in transactions)
-
-
-class SolanaWalletTracker:
+class TokenCreationTracker:
     def __init__(self):
-        print("Initializing SolanaWalletTracker")
+        print("Initializing TokenCreationTracker")
         self.client = AsyncClient(SOLANA_RPC_URL)
         self.application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
-        self.last_signatures = {str(addr): None for addr in WALLET_ADDRESSES}
+        self.last_signature = None
         self.subscribed_users = self.load_subscribed_users()
         self.processed_signatures = set()
-        self.last_notification_time = None
 
         # Add command handlers
         self.application.add_handler(CommandHandler("start", self.start_command))
@@ -85,35 +78,31 @@ class SolanaWalletTracker:
             }
             self.subscribed_users.append(user_data)
             self.save_subscribed_users()
-            await update.message.reply_text(
-                f"You have been subscribed to Solana wallet notifications!"
-            )
+            await update.message.reply_text("You have been subscribed to token creation notifications!")
         else:
-            await update.message.reply_text(
-                f"You are already subscribed to notifications!"
-            )
+            await update.message.reply_text("You are already subscribed to notifications!")
 
-    async def process_transaction(self, tx_data, wallet_address):
-        if is_new_transaction(tx_data["signature"]):
-            # Get transaction timestamp from Solana
-            tx_details = await self.client.get_transaction(tx_data["signature"])
+    async def process_token_creation(self, token_data):
+        if is_new_token(token_data["signature"]):
+            tx_details = await self.client.get_transaction(token_data["signature"])
             if tx_details and tx_details["result"] and tx_details["result"]["blockTime"]:
                 block_time = tx_details["result"]["blockTime"]
                 timestamp = datetime.fromtimestamp(block_time).strftime("%Y-%m-%d %H:%M:%S")
             else:
-                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")  # Fallback
-                
-            tx_data["timestamp"] = timestamp
-            tx_data["wallet_address"] = str(wallet_address)
-            save_transaction(tx_data)
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-            message = f"💫 *New Solana Transaction Detected*\n\n"
-            message += f"👛 *Wallet:* `{wallet_address}`\n"
+            token_data["timestamp"] = timestamp
+            save_token_creation(token_data)
+
+            message = f"🪙 *New Token Creation Detected*\n\n"
+            message += f"👨‍💼 *Creator:* `{CREATOR_WALLET}`\n"
             message += f"🕒 *Timestamp:* {timestamp}\n"
-            message += f"🔗 *Signature:* `{tx_data['signature'][:20]}...`\n"
-            message += f"💰 *Amount:* {tx_data['amount']:.6f} SOL\n"
-            message += f"📝 *Transaction Type:* {tx_data['type']}\n\n"
-            message += f"🔍 [View on Solana Explorer](https://explorer.solana.com/tx/{tx_data['signature']})"
+            message += f"🔗 *Signature:* `{token_data['signature'][:20]}...`\n"
+            message += f"💎 *Token Address:* `{token_data['token_address']}`\n"
+            message += f"📝 *Token Name:* {token_data['token_name']}\n"
+            message += f"💫 *Token Symbol:* {token_data['token_symbol']}\n"
+            message += f"🔢 *Decimals:* {token_data['decimals']}\n\n"
+            message += f"🔍 [View on Solana Explorer](https://explorer.solana.com/tx/{token_data['signature']})"
 
             for user in self.subscribed_users:
                 try:
@@ -126,98 +115,77 @@ class SolanaWalletTracker:
                 except Exception as e:
                     logger.error(f"Error sending Telegram message to {user}: {e}")
 
-    async def get_transaction_details(self, signature):
+    async def get_token_creation_details(self, signature):
         try:
             tx = await self.client.get_transaction(signature)
             if tx and tx["result"]:
-                # Calculate actual transaction amount from pre and post balances
-                pre_balance = tx["result"]["meta"]["preBalances"][0]
-                post_balance = tx["result"]["meta"]["postBalances"][0]
-                amount = (
-                    abs(post_balance - pre_balance) / 1e9
-                )  # Convert lamports to SOL
-
-                return {
-                    "signature": signature,
-                    "amount": amount,
-                    "type": "Transfer" if amount > 0 else "Other",
-                }
+                # Check if transaction contains token creation instruction
+                for instruction in tx["result"]["meta"]["innerInstructions"]:
+                    if "tokenProgram" in instruction and instruction["programId"] == "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA":
+                        # Extract token details from the transaction
+                        token_address = instruction["accounts"][1]  # Usually the token mint address
+                        token_info = await self.client.get_token_supply(token_address)
+                        
+                        return {
+                            "signature": signature,
+                            "token_address": token_address,
+                            "token_name": token_info.get("name", "Unknown"),
+                            "token_symbol": token_info.get("symbol", "Unknown"),
+                            "decimals": token_info.get("decimals", 0)
+                        }
         except Exception as e:
-            logger.error(f"Error getting transaction details: {e}")
+            logger.error(f"Error getting token creation details: {e}")
         return None
 
-    async def monitor_wallet(self):
+    async def monitor_token_creation(self):
         while True:
             try:
                 async with httpx.AsyncClient() as client:
-                    for wallet_address in WALLET_ADDRESSES:
-                        try:
-                            response = await client.post(
-                                SOLANA_RPC_URL,
-                                json={
-                                    "jsonrpc": "2.0",
-                                    "id": 1,
-                                    "method": "getSignaturesForAddress",
-                                    "params": [str(wallet_address)],
-                                },
-                                timeout=30.0,
-                            )
+                    response = await client.post(
+                        SOLANA_RPC_URL,
+                        json={
+                            "jsonrpc": "2.0",
+                            "id": 1,
+                            "method": "getSignaturesForAddress",
+                            "params": [str(CREATOR_WALLET)],
+                        },
+                        timeout=30.0,
+                    )
 
-                            if response.status_code == 429:
-                                logger.warning(
-                                    "Rate limit hit, waiting before retry..."
-                                )
-                                await asyncio.sleep(60)  # Wait 1 minute before retrying
-                                continue
+                    if response.status_code == 429:
+                        logger.warning("Rate limit hit, waiting before retry...")
+                        await asyncio.sleep(60)
+                        continue
 
-                            response.raise_for_status()
-                            signatures = response.json()
+                    response.raise_for_status()
+                    signatures = response.json()
 
-                            if signatures.get("result"):
-                                newest_signature = signatures["result"][0]["signature"]
-                                wallet_key = str(wallet_address)
+                    if signatures.get("result"):
+                        newest_signature = signatures["result"][0]["signature"]
 
-                                if (
-                                    newest_signature != self.last_signatures[wallet_key]
-                                    and newest_signature
-                                    not in self.processed_signatures
-                                ):
-                                    tx_data = await self.get_transaction_details(
-                                        newest_signature
-                                    )
-                                    if tx_data:
-                                        await self.process_transaction(
-                                            tx_data, wallet_key
-                                        )
-                                        self.processed_signatures.add(newest_signature)
-                                        self.last_signatures[wallet_key] = (
-                                            newest_signature
-                                        )
+                        if newest_signature != self.last_signature and newest_signature not in self.processed_signatures:
+                            token_data = await self.get_token_creation_details(newest_signature)
+                            if token_data:
+                                await self.process_token_creation(token_data)
+                                self.processed_signatures.add(newest_signature)
+                                self.last_signature = newest_signature
 
-                        except httpx.RequestError as e:
-                            logger.error(
-                                f"Request error for wallet {wallet_address}: {e}"
-                            )
-                            continue
-
-                    await asyncio.sleep(10)  # Check every 10 seconds
+                await asyncio.sleep(10)  # Check every 10 seconds
 
             except Exception as e:
-                logger.error(f"Error monitoring wallets: {e}")
-                await asyncio.sleep(30)  # Wait longer on error
-
+                logger.error(f"Error monitoring token creation: {e}")
+                await asyncio.sleep(30)
 
 async def main():
-    tracker = SolanaWalletTracker()
-    logger.info("Starting Solana wallet tracker...")
+    tracker = TokenCreationTracker()
+    logger.info("Starting token creation tracker...")
     await tracker.application.initialize()
     await tracker.application.start()
 
-    # Run both the monitoring and the bot polling together
     await asyncio.gather(
-        tracker.monitor_wallet(), tracker.application.updater.start_polling()
+        tracker.monitor_token_creation(),
+        tracker.application.updater.start_polling()
     )
-
 
 if __name__ == "__main__":
     asyncio.run(main())
