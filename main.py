@@ -1,4 +1,3 @@
-
 import asyncio
 from solana.rpc.async_api import AsyncClient
 from telegram.ext import Application, CommandHandler
@@ -20,6 +19,7 @@ CREATOR_WALLET = PublicKey("E88QpPXQFjyKmVK7kj5NjkAPjLTYnYoY2Dd6Po7WUJjg")
 USERS_FILE = "subscribed_users.json"
 TOKEN_CREATION_FILE = "token_creations.json"
 
+
 def load_token_creations():
     if os.path.exists(TOKEN_CREATION_FILE):
         try:
@@ -29,15 +29,18 @@ def load_token_creations():
             return []
     return []
 
+
 def save_token_creation(token_data):
     tokens = load_token_creations()
     tokens.append(token_data)
     with open(TOKEN_CREATION_FILE, "w") as f:
         json.dump(tokens, f, indent=4)
 
+
 def is_new_token(signature):
     tokens = load_token_creations()
     return not any(token["signature"] == signature for token in tokens)
+
 
 class TokenCreationTracker:
     def __init__(self):
@@ -78,16 +81,26 @@ class TokenCreationTracker:
             }
             self.subscribed_users.append(user_data)
             self.save_subscribed_users()
-            await update.message.reply_text("You have been subscribed to token creation notifications!")
+            await update.message.reply_text(
+                "You have been subscribed to token creation notifications!"
+            )
         else:
-            await update.message.reply_text("You are already subscribed to notifications!")
+            await update.message.reply_text(
+                "You are already subscribed to notifications!"
+            )
 
     async def process_token_creation(self, token_data):
         if is_new_token(token_data["signature"]):
             tx_details = await self.client.get_transaction(token_data["signature"])
-            if tx_details and tx_details["result"] and tx_details["result"]["blockTime"]:
+            if (
+                tx_details
+                and tx_details["result"]
+                and tx_details["result"]["blockTime"]
+            ):
                 block_time = tx_details["result"]["blockTime"]
-                timestamp = datetime.fromtimestamp(block_time).strftime("%Y-%m-%d %H:%M:%S")
+                timestamp = datetime.fromtimestamp(block_time).strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                )
             else:
                 timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -121,17 +134,23 @@ class TokenCreationTracker:
             if tx and tx["result"]:
                 # Check if transaction contains token creation instruction
                 for instruction in tx["result"]["meta"]["innerInstructions"]:
-                    if "tokenProgram" in instruction and instruction["programId"] == "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA":
+                    if (
+                        "tokenProgram" in instruction
+                        and instruction["programId"]
+                        == "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+                    ):
                         # Extract token details from the transaction
-                        token_address = instruction["accounts"][1]  # Usually the token mint address
+                        token_address = instruction["accounts"][
+                            1
+                        ]  # Usually the token mint address
                         token_info = await self.client.get_token_supply(token_address)
-                        
+
                         return {
                             "signature": signature,
                             "token_address": token_address,
                             "token_name": token_info.get("name", "Unknown"),
                             "token_symbol": token_info.get("symbol", "Unknown"),
-                            "decimals": token_info.get("decimals", 0)
+                            "decimals": token_info.get("decimals", 0),
                         }
         except Exception as e:
             logger.error(f"Error getting token creation details: {e}")
@@ -161,20 +180,38 @@ class TokenCreationTracker:
                     signatures = response.json()
 
                     if signatures.get("result"):
-                        newest_signature = signatures["result"][0]["signature"]
+                        # Load processed signatures from transactions.json
+                        try:
+                            with open("transactions.json", "r") as f:
+                                saved_transactions = json.load(f)
+                                saved_signatures = {
+                                    tx["signature"] for tx in saved_transactions
+                                }
+                        except (FileNotFoundError, json.JSONDecodeError):
+                            saved_signatures = set()
 
-                        if newest_signature != self.last_signature and newest_signature not in self.processed_signatures:
-                            token_data = await self.get_token_creation_details(newest_signature)
-                            if token_data:
-                                await self.process_token_creation(token_data)
-                                self.processed_signatures.add(newest_signature)
-                                self.last_signature = newest_signature
+                        # Process all new signatures in reverse order (newest first)
+                        for sig_data in signatures["result"]:
+                            current_signature = sig_data["signature"]
+
+                            if (
+                                current_signature not in saved_signatures
+                                and current_signature not in self.processed_signatures
+                            ):
+                                token_data = await self.get_token_creation_details(
+                                    current_signature
+                                )
+                                if token_data:
+                                    await self.process_token_creation(token_data)
+                                    self.processed_signatures.add(current_signature)
+                                    self.last_signature = current_signature
 
                 await asyncio.sleep(10)  # Check every 10 seconds
 
             except Exception as e:
                 logger.error(f"Error monitoring token creation: {e}")
                 await asyncio.sleep(30)
+
 
 async def main():
     tracker = TokenCreationTracker()
@@ -183,9 +220,9 @@ async def main():
     await tracker.application.start()
 
     await asyncio.gather(
-        tracker.monitor_token_creation(),
-        tracker.application.updater.start_polling()
+        tracker.monitor_token_creation(), tracker.application.updater.start_polling()
     )
+
 
 if __name__ == "__main__":
     asyncio.run(main())
