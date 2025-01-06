@@ -1,0 +1,17 @@
+To install this package, run the following command:
+
+```
+pip install -r requirements.txt
+```
+
+python main.py
+
+You should change the key information  in the .evn file.
+
+Used api key
+```
+quicknode
+telegram bot token
+tracking wallet address
+proxy ip server
+```

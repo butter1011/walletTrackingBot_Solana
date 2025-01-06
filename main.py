@@ -12,16 +12,22 @@ import random
 import threading
 import queue
 import sys
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
+# Update the constants to use environment variables
+SOLANA_RPC_URL = os.getenv('SOLANA_RPC_URL')
+TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+CREATOR_WALLET = PublicKey(os.getenv('CREATOR_WALLET'))
+USERS_FILE = os.getenv('USERS_FILE')
+TOKEN_CREATION_FILE = os.getenv('TOKEN_CREATION_FILE')
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-SOLANA_RPC_URL = "https://docs-demo.solana-mainnet.quiknode.pro/"
-TELEGRAM_BOT_TOKEN = "7643287966:AAHsQEn2r29Wplh3IhRKoC1f25jNezl8nwM"
-CREATOR_WALLET = PublicKey("E88QpPXQFjyKmVK7kj5NjkAPjLTYnYoY2Dd6Po7WUJjg")
-USERS_FILE = "subscribed_users.json"
-TOKEN_CREATION_FILE = "token_creations.json"
 cache = cachetools.func.TTLCache(maxsize=1000, ttl=600)
 
 PROXIES = [
@@ -210,6 +216,18 @@ class TokenCreationTracker:
 
     async def notify_subscribers(self, token_data):
         print(f"Notifying subscribers about token creation: {token_data}")
+        
+        # Create inline keyboard with button
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+        
+        keyboard = [[
+            InlineKeyboardButton(
+                "View on NeoBullx 🔍", 
+                url=f"https://neobullx.com/token/{token_data['token_address']}"
+            )
+        ]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
         message = (
             f"🔔 New Token Created!\n\n"
             f"Token Address: {token_data['token_address']}\n"
@@ -220,12 +238,16 @@ class TokenCreationTracker:
         for user in self.subscribed_users:
             try:
                 await self.application.bot.send_message(
-                    chat_id=user["chat_id"], text=message, parse_mode="HTML"
+                    chat_id=user["chat_id"],
+                    text=message,
+                    parse_mode="HTML",
+                    reply_markup=reply_markup
                 )
             except Exception as e:
                 logger.error(
                     f"Error sending notification to user {user['chat_id']}: {e}"
                 )
+
 
     async def monitor_token_creation(self):
         while True:
