@@ -12,17 +12,18 @@ import random
 import threading
 import queue
 import sys
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
 
 # Update the constants to use environment variables
-SOLANA_RPC_URL = os.getenv('SOLANA_RPC_URL')
-TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-CREATOR_WALLET = PublicKey(os.getenv('CREATOR_WALLET'))
-USERS_FILE = os.getenv('USERS_FILE')
-TOKEN_CREATION_FILE = os.getenv('TOKEN_CREATION_FILE')
+SOLANA_RPC_URL = os.getenv("SOLANA_RPC_URL")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+CREATOR_WALLET = PublicKey(os.getenv("CREATOR_WALLET"))
+USERS_FILE = os.getenv("USERS_FILE")
+TOKEN_CREATION_FILE = os.getenv("TOKEN_CREATION_FILE")
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -41,6 +42,9 @@ PROXIES = [
     {"http://": "http://8.in.p.apiroute.net:12324/"},
     {"http://": "http://9.in.p.apiroute.net:12324/"},
     {"http://": "http://10.in.p.apiroute.net:12324/"},
+]
+
+PROXIES_EXTRA = [
     {"http://": "http://11.in.p.apiroute.net:12324/"},
     {"http://": "http://12.in.p.apiroute.net:12324/"},
     {"http://": "http://13.in.p.apiroute.net:12324/"},
@@ -51,31 +55,63 @@ PROXIES = [
     {"http://": "http://18.in.p.apiroute.net:12324/"},
     {"http://": "http://19.in.p.apiroute.net:12324/"},
     {"http://": "http://20.in.p.apiroute.net:12324/"},
-    {"http://": "http://21.in.p.apiroute.net:12324/"},
 ]
 
-PROXIES_EXTRA = [
-    {"http://": "http://22.in.p.apiroute.net:12324/"},
-    {"http://": "http://23.in.p.apiroute.net:12324/"},
-    {"http://": "http://24.in.p.apiroute.net:12324/"},
-    {"http://": "http://25.in.p.apiroute.net:12324/"},
-    {"http://": "http://26.in.p.apiroute.net:12324/"},
-    {"http://": "http://27.in.p.apiroute.net:12324/"},
-    {"http://": "http://28.in.p.apiroute.net:12324/"},
-    {"http://": "http://29.in.p.apiroute.net:12324/"},
-    {"http://": "http://30.in.p.apiroute.net:12324/"},
-]
-
-proxy = PROXIES[20]
+proxy = PROXIES_EXTRA[9]
 api_success_count = 0
 api_rate_limit_count = 0
+
+
+async def get_token_name(transaction):
+    try:
+        # Extract token name from transaction data
+        token_name = transaction.get("meta", {}).get("tokenName", "Unknown Token")
+        return token_name
+    except:
+        return "Unknown Token"
+
+
+async def get_token_symbol(transaction):
+    try:
+        # Extract token symbol from transaction data
+        token_symbol = transaction.get("meta", {}).get("tokenSymbol", "???")
+        return token_symbol
+    except:
+        return "???"
+
+
+async def get_token_decimals(transaction):
+    try:
+        # Extract token decimals from transaction data
+        token_decimals = transaction.get("meta", {}).get("tokenDecimals", 9)
+        return token_decimals
+    except:
+        return 9
+
+
+async def get_token_supply(transaction):
+    try:
+        # Extract token supply from transaction data
+        token_supply = transaction.get("meta", {}).get("tokenSupply", "Unknown")
+        return token_supply
+    except:
+        return "Unknown"
+
+
+async def get_token_address(transaction):
+    try:
+        # Extract token address from transaction data
+        token_address = transaction.get("meta", {}).get("tokenAddress", "Unknown")
+        return token_address
+    except:
+        return "Unknown"
 
 
 def random_proxy():
     return random.choice(PROXIES_EXTRA)
 
 
-def process_transactions_with_threads(signatures, num_threads=20):
+def process_transactions_with_threads(signatures, num_threads=10):
     signature_queue = queue.Queue()
     for signature in signatures:
         signature_queue.put(signature["signature"])
@@ -118,7 +154,6 @@ def process_transactions_with_threads(signatures, num_threads=20):
 
 async def get_transaction_details(signature, thread_proxy):
     global api_success_count, api_rate_limit_count
-    print(f"Using proxy: {thread_proxy}")
     max_retries = 10
     retry_count = 0
 
@@ -215,24 +250,25 @@ class TokenCreationTracker:
             )
 
     async def notify_subscribers(self, token_data):
-        print(f"Notifying subscribers about token creation: {token_data}")
-        
-        # Create inline keyboard with button
-        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-        
-        keyboard = [[
-            InlineKeyboardButton(
-                "View on NeoBullx 🔍", 
-                url=f"https://neobullx.com/token/{token_data['token_address']}"
-            )
-        ]]
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    "View on NeoBullx 🔍",
+                    url=f"https://bullx.io/terminal?chainId=1399811149&address={token_data['token_address']}",
+                )
+            ]
+        ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-
         message = (
-            f"🔔 New Token Created!\n\n"
-            f"Token Address: {token_data['token_address']}\n"
-            f"Transaction: https://solscan.io/tx/{token_data['signature']}\n"
-            f"Time: {token_data['timestamp']}"
+            f"🚀 <b>New Token Created!</b>\n\n"
+            f"🔷 <b>Token Details:</b>\n"
+            f"├ <b>Name:</b> {token_data['token_name']}\n"
+            f"├ <b>Symbol:</b> {token_data['token_symbol']}\n"
+            f"├ <b>Supply:</b> {token_data['token_supply']}\n"
+            f"├ <b>Decimals:</b> {token_data['token_decimals']}\n"
+            f"├ <b>Address:</b> <code>{token_data['token_address']}</code>\n"
+            f"🔗 <b>Transaction:</b> <a href='https://solscan.io/tx/{token_data['signature']}'>View on Solscan</a>\n"
+            f"⏰ <b>Created:</b> {token_data['timestamp']}"
         )
 
         for user in self.subscribed_users:
@@ -241,13 +277,12 @@ class TokenCreationTracker:
                     chat_id=user["chat_id"],
                     text=message,
                     parse_mode="HTML",
-                    reply_markup=reply_markup
+                    reply_markup=reply_markup,
                 )
             except Exception as e:
                 logger.error(
                     f"Error sending notification to user {user['chat_id']}: {e}"
                 )
-
 
     async def monitor_token_creation(self):
         while True:
@@ -293,7 +328,21 @@ class TokenCreationTracker:
                                             transaction
                                         ):
                                             token_data = {
-                                                "token_address": str(CREATOR_WALLET),
+                                                "token_name": await get_token_name(
+                                                    transaction
+                                                ),
+                                                "token_symbol": await get_token_symbol(
+                                                    transaction
+                                                ),
+                                                "token_decimals": await get_token_decimals(
+                                                    transaction
+                                                ),
+                                                "token_supply": await get_token_supply(
+                                                    transaction
+                                                ),
+                                                "token_address": await get_token_address(
+                                                    transaction
+                                                ),
                                                 "signature": signature,
                                                 "timestamp": datetime.fromtimestamp(
                                                     transaction.get("blockTime", 0)
