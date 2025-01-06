@@ -8,42 +8,114 @@ import os
 from solana.publickey import PublicKey
 import httpx
 import cachetools.func
+import random
+import threading
+import queue
+import sys
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Configuration
-SOLANA_RPC_URL = "https://api.mainnet-beta.solana.com"
+SOLANA_RPC_URL = "https://docs-demo.solana-mainnet.quiknode.pro/"
 TELEGRAM_BOT_TOKEN = "7643287966:AAHsQEn2r29Wplh3IhRKoC1f25jNezl8nwM"
 CREATOR_WALLET = PublicKey("E88QpPXQFjyKmVK7kj5NjkAPjLTYnYoY2Dd6Po7WUJjg")
 USERS_FILE = "subscribed_users.json"
 TOKEN_CREATION_FILE = "token_creations.json"
 cache = cachetools.func.TTLCache(maxsize=1000, ttl=600)
 
+PROXIES = [
+    {"http://": "http://1.in.p.apiroute.net:12324/"},
+    {"http://": "http://2.in.p.apiroute.net:12324/"},
+    {"http://": "http://3.in.p.apiroute.net:12324/"},
+    {"http://": "http://4.in.p.apiroute.net:12324/"},
+    {"http://": "http://5.in.p.apiroute.net:12324/"},
+    {"http://": "http://6.in.p.apiroute.net:12324/"},
+    {"http://": "http://7.in.p.apiroute.net:12324/"},
+    {"http://": "http://8.in.p.apiroute.net:12324/"},
+    {"http://": "http://9.in.p.apiroute.net:12324/"},
+    {"http://": "http://10.in.p.apiroute.net:12324/"},
+    {"http://": "http://11.in.p.apiroute.net:12324/"},
+    {"http://": "http://12.in.p.apiroute.net:12324/"},
+    {"http://": "http://13.in.p.apiroute.net:12324/"},
+    {"http://": "http://14.in.p.apiroute.net:12324/"},
+    {"http://": "http://15.in.p.apiroute.net:12324/"},
+    {"http://": "http://16.in.p.apiroute.net:12324/"},
+    {"http://": "http://17.in.p.apiroute.net:12324/"},
+    {"http://": "http://18.in.p.apiroute.net:12324/"},
+    {"http://": "http://19.in.p.apiroute.net:12324/"},
+    {"http://": "http://20.in.p.apiroute.net:12324/"},
+    {"http://": "http://21.in.p.apiroute.net:12324/"},
+]
 
-def load_token_creations():
-    if os.path.exists(TOKEN_CREATION_FILE):
-        try:
-            with open(TOKEN_CREATION_FILE, "r") as f:
-                return json.load(f)
-        except:
-            return []
-    return []
+PROXIES_EXTRA = [
+    {"http://": "http://22.in.p.apiroute.net:12324/"},
+    {"http://": "http://23.in.p.apiroute.net:12324/"},
+    {"http://": "http://24.in.p.apiroute.net:12324/"},
+    {"http://": "http://25.in.p.apiroute.net:12324/"},
+    {"http://": "http://26.in.p.apiroute.net:12324/"},
+    {"http://": "http://27.in.p.apiroute.net:12324/"},
+    {"http://": "http://28.in.p.apiroute.net:12324/"},
+    {"http://": "http://29.in.p.apiroute.net:12324/"},
+    {"http://": "http://30.in.p.apiroute.net:12324/"},
+]
+
+proxy = PROXIES[20]
+api_success_count = 0
+api_rate_limit_count = 0
 
 
-def save_token_creation(token_data):
-    tokens = load_token_creations()
-    tokens.append(token_data)
-    with open(TOKEN_CREATION_FILE, "w") as f:
-        json.dump(tokens, f, indent=4)
+def random_proxy():
+    return random.choice(PROXIES_EXTRA)
 
 
-async def get_transaction_details(signature):
-    await asyncio.sleep(0.3)  # Add a delay before retrying
+def process_transactions_with_threads(signatures, num_threads=20):
+    signature_queue = queue.Queue()
+    for signature in signatures:
+        signature_queue.put(signature["signature"])
 
-    if signature in cache:
-        return cache[signature]
+    results = []
+    results_lock = threading.Lock()
+
+    def worker():
+        while True:
+            try:
+                signature = signature_queue.get(timeout=1)
+                thread_proxy = PROXIES[
+                    int(threading.current_thread().name.split("-")[1])
+                ]
+                result = asyncio.run(get_transaction_details(signature, thread_proxy))
+
+                if result:
+                    with results_lock:
+                        results.append(result)
+
+                signature_queue.task_done()
+            except queue.Empty:
+                break
+            except Exception as e:
+                logger.error(f"Error processing signature: {e}")
+                signature_queue.task_done()
+
+    threads = []
+
+    for i in range(num_threads):
+        t = threading.Thread(target=worker, name=f"Worker-{i}")
+        t.start()
+        threads.append(t)
+
+    for t in threads:
+        t.join()
+
+    return results
+
+
+async def get_transaction_details(signature, thread_proxy):
+    global api_success_count, api_rate_limit_count
+    print(f"Using proxy: {thread_proxy}")
+    max_retries = 10
+    retry_count = 0
+
     payload_transaction_details = {
         "jsonrpc": "2.0",
         "id": 1,
@@ -53,21 +125,40 @@ async def get_transaction_details(signature):
             {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0},
         ],
     }
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            SOLANA_RPC_URL,
-            json=payload_transaction_details,
-            headers={"Content-Type": "application/json"},
-        )
-        if response.status_code == 200:
-            data = response.json()
-            cache[signature] = data  # Store the data in cache
-            return data
 
+    while retry_count < max_retries:
+        try:
+            async with httpx.AsyncClient(proxies=thread_proxy) as client:
+                response = await client.post(
+                    SOLANA_RPC_URL,
+                    json=payload_transaction_details,
+                    headers={"Content-Type": "application/json"},
+                    timeout=30.0,
+                )
 
-def is_new_token(signature):
-    tokens = load_token_creations()
-    return not any(token["signature"] == signature for token in tokens)
+                if response.status_code == 429:
+                    logger.warning(
+                        f"Rate limit exceeded. Retry attempt {retry_count + 1}/{max_retries}"
+                    )
+                    api_rate_limit_count += 1
+                    thread_proxy = random_proxy()
+                    retry_count += 1
+                    continue
+
+                if response.status_code == 200:
+                    api_success_count += 1
+                    data = response.json()
+                    logger.info(
+                        f"API Stats - Successful: {api_success_count}, Rate Limited: {api_rate_limit_count}"
+                    )
+                    return data
+
+        except Exception as e:
+            logger.error(f"Error with proxy {thread_proxy}: {e}")
+            retry_count += 1
+            thread_proxy = random_proxy()
+
+    return None
 
 
 class TokenCreationTracker:
@@ -117,51 +208,29 @@ class TokenCreationTracker:
                 "You are already subscribed to notifications!"
             )
 
-    async def get_token_creation_details(self, signature):
-        try:
-            print(f"Getting token creation details for signature: {signature}")
-            tx = await get_transaction_details(signature)
-            print(f"Transaction details: {tx}")
-            print("----------------------------------------------------😂😂")
-            if tx and tx.get("result"):
-                result = tx["result"]
-                if result.get("meta") and result["meta"].get("innerInstructions"):
-                    for inner_instructions in result["meta"]["innerInstructions"]:
-                        for ix in inner_instructions["instructions"]:
-                            if ix.get("programId") == "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA":
-                                if "parsed" in ix and ix["parsed"].get("type") == "initializeMint":
-                                    token_address = ix["parsed"]["info"]["mint"]
-                                    return {
-                                        "signature": signature,
-                                        "token_address": token_address,
-                                        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                    }
-        except Exception as e:
-            logger.error(f"Error getting token creation details: {e}")
-        return None
-
     async def notify_subscribers(self, token_data):
+        print(f"Notifying subscribers about token creation: {token_data}")
         message = (
             f"🔔 New Token Created!\n\n"
             f"Token Address: {token_data['token_address']}\n"
             f"Transaction: https://solscan.io/tx/{token_data['signature']}\n"
             f"Time: {token_data['timestamp']}"
         )
-        
+
         for user in self.subscribed_users:
             try:
                 await self.application.bot.send_message(
-                    chat_id=user["chat_id"],
-                    text=message,
-                    parse_mode="HTML"
+                    chat_id=user["chat_id"], text=message, parse_mode="HTML"
                 )
             except Exception as e:
-                logger.error(f"Error sending notification to user {user['chat_id']}: {e}")
+                logger.error(
+                    f"Error sending notification to user {user['chat_id']}: {e}"
+                )
 
     async def monitor_token_creation(self):
         while True:
             try:
-                async with httpx.AsyncClient() as client:
+                async with httpx.AsyncClient(proxies=proxy, timeout=30.0) as client:
                     response = await client.post(
                         SOLANA_RPC_URL,
                         json={
@@ -170,57 +239,69 @@ class TokenCreationTracker:
                             "method": "getSignaturesForAddress",
                             "params": [str(CREATOR_WALLET), {"limit": 10}],
                         },
-                        timeout=30.0,
                     )
-
-                    if response.status_code == 429:
-                        logger.warning("Rate limit hit, waiting before retry...")
-                        await asyncio.sleep(60)
-                        continue
 
                     response.raise_for_status()
                     signatures = response.json()
 
                     if signatures.get("result"):
-                        # Load existing transactions
-                        try:
-                            with open("transactions.json", "r") as f:
-                                saved_transactions = json.load(f)
-                        except (FileNotFoundError, json.JSONDecodeError):
-                            saved_transactions = []
+                        results = process_transactions_with_threads(
+                            signatures["result"]
+                        )
+                        for result in results:
+                            if result and result.get("result"):
+                                transaction = result["result"]
+                                if transaction:
+                                    signature = transaction.get("transaction", {}).get(
+                                        "signatures", [""]
+                                    )[0]
 
-                        # Get set of existing signatures
-                        saved_signatures = {tx["signature"] for tx in saved_transactions}
+                                    try:
+                                        with open(
+                                            "processed_transactions.json", "r"
+                                        ) as f:
+                                            processed_txs = json.load(f)
+                                    except:
+                                        processed_txs = []
 
-                        # Add new signatures
-                        for sig_data in signatures["result"]:
-                            current_signature = sig_data["signature"]
-                            if current_signature not in saved_signatures:
-                                saved_transactions.append({
-                                    "signature": current_signature,
-                                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                    "slot": sig_data.get("slot"),
-                                    "blockTime": sig_data.get("blockTime")
-                                })
+                                    if signature not in [
+                                        tx["signature"] for tx in processed_txs
+                                    ]:
+                                        if self.is_token_creation_transaction(
+                                            transaction
+                                        ):
+                                            token_data = {
+                                                "token_address": str(CREATOR_WALLET),
+                                                "signature": signature,
+                                                "timestamp": datetime.fromtimestamp(
+                                                    transaction.get("blockTime", 0)
+                                                ).strftime("%Y-%m-%d %H:%M:%S"),
+                                            }
 
-                        # Save updated transactions
-                        with open("transactions.json", "w") as f:
-                            json.dump(saved_transactions, f, indent=4)
+                                            processed_txs.append(token_data)
+                                            with open(
+                                                "processed_transactions.json", "w"
+                                            ) as f:
+                                                json.dump(processed_txs, f)
 
-                        # Process token creations
-                        for sig_data in signatures["result"]:
-                            current_signature = sig_data["signature"]
-                            if current_signature not in self.processed_signatures:
-                                token_data = await self.get_token_creation_details(current_signature)
-                                if token_data:
-                                    save_token_creation(token_data)
-                                    await self.notify_subscribers(token_data)
-                                    self.processed_signatures.add(current_signature)
+                                            await self.notify_subscribers(token_data)
 
                 await asyncio.sleep(5)
-
             except Exception as e:
                 logger.error(f"Error monitoring token creation: {e}")
+                await asyncio.sleep(5)
+
+    def is_token_creation_transaction(self, transaction):
+        try:
+            program_ids = [
+                account.get("program")
+                for account in transaction.get("transaction", {})
+                .get("message", {})
+                .get("accountKeys", [])
+            ]
+            return "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" in program_ids
+        except:
+            return False
 
 
 async def main():
@@ -228,11 +309,12 @@ async def main():
     logger.info("Starting token creation tracker...")
     await tracker.application.initialize()
     await tracker.application.start()
-
     await asyncio.gather(
         tracker.monitor_token_creation(), tracker.application.updater.start_polling()
     )
 
 
 if __name__ == "__main__":
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     asyncio.run(main())
